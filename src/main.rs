@@ -1,5 +1,3 @@
-//! Example code for using MongoDB with Actix.
-
 mod model;
 #[cfg(test)]
 mod test;
@@ -8,13 +6,13 @@ use actix_web::{get, post, web, App, HttpResponse, HttpServer};
 use model::User;
 use mongodb::{bson::doc, options::IndexOptions, Client, Collection, IndexModel};
 
-const DB_NAME: &str = "myApp";
-const COLL_NAME: &str = "users";
+const USERS: &str = "users";
 
 /// Adds a new user to the "users" collection in the database.
 #[post("/add_user")]
 async fn add_user(client: web::Data<Client>, form: web::Form<User>) -> HttpResponse {
-    let collection = client.database(DB_NAME).collection(COLL_NAME);
+    let db_name = std::env::var("MONGODB_NAME").expect("MONGODB_NAME must be set");
+    let collection = client.database(&db_name).collection(USERS);
     let result = collection.insert_one(form.into_inner(), None).await;
     match result {
         Ok(_) => HttpResponse::Ok().body("user added"),
@@ -25,8 +23,9 @@ async fn add_user(client: web::Data<Client>, form: web::Form<User>) -> HttpRespo
 /// Gets the user with the supplied username.
 #[get("/get_user/{username}")]
 async fn get_user(client: web::Data<Client>, username: web::Path<String>) -> HttpResponse {
+    let db_name = std::env::var("MONGODB_NAME").expect("MONGODB_NAME must be set");
     let username = username.into_inner();
-    let collection: Collection<User> = client.database(DB_NAME).collection(COLL_NAME);
+    let collection: Collection<User>  = client.database(&db_name).collection(USERS);
     match collection
         .find_one(doc! { "username": &username }, None)
         .await
@@ -41,14 +40,15 @@ async fn get_user(client: web::Data<Client>, username: web::Path<String>) -> Htt
 
 /// Creates an index on the "username" field to force the values to be unique.
 async fn create_username_index(client: &Client) {
+    let db_name = std::env::var("MONGODB_NAME").expect("MONGODB_NAME must be set");
     let options = IndexOptions::builder().unique(true).build();
     let model = IndexModel::builder()
         .keys(doc! { "username": 1 })
         .options(options)
         .build();
     client
-        .database(DB_NAME)
-        .collection::<User>(COLL_NAME)
+        .database(&db_name)
+        .collection::<User>(USERS)
         .create_index(model, None)
         .await
         .expect("creating an index should succeed");
@@ -56,9 +56,11 @@ async fn create_username_index(client: &Client) {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    dotenv::dotenv().ok();
+    // Connect to MongoDB.
     let uri = std::env::var("MONGODB_URI").unwrap_or_else(|_| "mongodb://localhost:27017".into());
-
     let client = Client::with_uri_str(uri).await.expect("failed to connect");
+
     create_username_index(&client).await;
 
     HttpServer::new(move || {
